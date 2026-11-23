@@ -5,48 +5,99 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   qualidade:
-    name: Lint, tipos, build e unitários (${{ matrix.os }}, Node ${{ matrix.node }})
+    name: ${{ matrix.servico }} (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-latest]
         node: [22, 24]
+        servico:
+          - cinebridge-api
+          - cinebridge-profissionais
+          - cinebridge-projetos
+          - cinebridge-notificacoes
+    defaults:
+      run:
+        working-directory: servicos/${{ matrix.servico }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+          cache-dependency-path: servicos/${{ matrix.servico }}/package-lock.json
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:unit
-      - run: npm run test:desempenho
-      - run: npm run demo
+      - name: Cobertura dos testes unitários
+        if: matrix.servico != 'cinebridge-api'
+        run: npm run coverage
+      - name: Testes de desempenho
+        if: matrix.servico == 'cinebridge-api'
+        run: npm run test:desempenho
+      - name: Demonstração dos padrões
+        if: matrix.servico == 'cinebridge-api'
+        run: npm run demo
 
   integracao:
-    name: Integração com PostgreSQL e cobertura
+    name: Integração do api com PostgreSQL e cobertura
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: servicos/cinebridge-api/package-lock.json
+      - name: Subir o PostgreSQL do api
+        run: docker compose up -d --wait recomendacoes-db
+      - name: Preparar o .env do api
+        run: cp .env.example .env
+        working-directory: servicos/cinebridge-api
       - run: npm ci
-      - run: cp .env.example .env
-      - run: npm run db:up
-      - run: npm run coverage
+        working-directory: servicos/cinebridge-api
+      - name: Testes unitários, de integração e cobertura (mínimo de 80%)
+        run: npm run coverage
+        working-directory: servicos/cinebridge-api
+      - name: Logs do PostgreSQL em caso de falha
+        if: failure()
+        run: docker compose logs --no-color recomendacoes-db
+      - name: Derrubar o PostgreSQL
+        if: always()
+        run: docker compose down -v
 
   stack-docker:
-    name: Subida da stack Docker
+    name: Stack completa (4 serviços, 4 bancos e RabbitMQ)
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose up -d --build --wait
-      - run: curl --fail http://localhost:3000/health
-      - run: docker compose down -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Subir a stack e esperar todos os healthchecks
+        run: docker compose up -d --build --wait --wait-timeout 600
+      - name: Verificar o fluxo ponta a ponta da etapa 7
+        run: node scripts/verificar-stack.mjs
+      - name: Estado e logs dos containers em caso de falha
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail=300
+      - name: Derrubar a stack e apagar os volumes
+        if: always()
+        run: docker compose down -v

@@ -231,3 +231,105 @@ Content-Type: application/json
 
 ### ATVIII-8. Decorator: a chamada aparece na auditoria como RECOMENDADOR_EXECUTADO
 GET {{base}}/projetos/{{projetoServicos.response.body.projeto.id}}/auditoria
+
+### ATVIV. Stack completa: sobe com `docker compose up -d --build`; a verificação automática é `node scripts/verificar-stack.mjs`
+@profissionais = http://localhost:3001
+@projetos = http://localhost:3002
+@notificacoes = http://localhost:3003
+@rabbit = http://localhost:15672
+@rabbitAuth = Basic Z3Vlc3Q6Z3Vlc3Q=
+
+### ATVIV-1. Saúde de cada serviço: 200 com postgres e rabbitmq disponíveis (503 se qualquer um cair)
+GET {{base}}/health
+
+###
+GET {{profissionais}}/health
+
+###
+GET {{projetos}}/health
+
+###
+GET {{notificacoes}}/health
+
+### ATVIV-2. Profissionais consulta o próprio banco (o api só os conhece pela fila consulta-profissionais)
+GET {{profissionais}}/profissionais?papel=DIRETOR&limite=5
+
+### ATVIV-3. Etapa 7: cria o projeto no api (consulta profissionais via RabbitMQ e publica o evento em atualizacoes-projetos)
+# @name criarStack
+POST {{base}}/projetos
+Content-Type: application/json
+x-request-id: demo-atviv
+
+{
+  "titulo": "Vozes do Sertão",
+  "produtorId": "produtor-1",
+  "genero": "drama",
+  "tipoCaptacao": "FICCAO",
+  "duracaoMinutos": 95,
+  "orcamento": 280000,
+  "dataInicio": "2027-03-01T00:00:00.000Z",
+  "dataEntrega": "2027-06-30T00:00:00.000Z",
+  "localizacao": { "cidade": "São Paulo", "uf": "SP", "latitude": -23.5505, "longitude": -46.6333 },
+  "requisitos": [
+    { "papel": "DIRETOR", "peso": 10 },
+    { "papel": "DIRETOR_FOTOGRAFIA", "peso": 8 },
+    { "papel": "ROTEIRISTA", "peso": 7 },
+    { "papel": "EDITOR", "peso": 6 },
+    { "papel": "SONOPLASTA", "peso": 5 },
+    { "papel": "EFEITOS_VISUAIS", "peso": 3 }
+  ],
+  "estrategia": "similaridade-cosseno"
+}
+
+@stackProjetoId = {{criarStack.response.body.$.projeto.id}}
+@stackEquipeId = {{criarStack.response.body.$.projeto.equipes[0].id}}
+
+### ATVIV-4. Projetos registrou o projeto: status CRIADO e métricas da primeira rodada
+GET {{projetos}}/projetos/{{stackProjetoId}}
+
+### ATVIV-5. Projetos lista os projetos do produtor
+GET {{projetos}}/projetos?produtorId=produtor-1
+
+### ATVIV-6. Notificações: avisos do projeto nos canais EMAIL e INTERNA
+GET {{notificacoes}}/notificacoes?projetoId={{stackProjetoId}}
+
+### ATVIV-7. Notificações: só os avisos do produtor
+GET {{notificacoes}}/notificacoes?destinatarioId=produtor-1&projetoId={{stackProjetoId}}
+
+### ATVIV-8. Produtor aceita o diretor sugerido: o profissional recebe um convite
+# @name aceiteStack
+POST {{base}}/projetos/{{stackProjetoId}}/equipes/{{stackEquipeId}}/membros/DIRETOR/aceite
+
+@stackConviteId = {{aceiteStack.response.body.$.convite.id}}
+
+### ATVIV-9. Profissional aceita: o evento CONVITE_ACEITO vira PROJETO_ATUALIZADO e o produtor recebe "Convite aceito para DIRETOR"
+POST {{base}}/convites/{{stackConviteId}}/resposta
+Content-Type: application/json
+
+{ "aceito": true }
+
+### ATVIV-10. Depois do aceite: métricas.convites.aceitos sobe para 1
+GET {{projetos}}/projetos/{{stackProjetoId}}
+
+### ATVIV-11. Depois do aceite: aviso "Convite aceito para DIRETOR" ao produtor
+GET {{notificacoes}}/notificacoes?destinatarioId=produtor-1&projetoId={{stackProjetoId}}
+
+### RabbitMQ-1. API de gerenciamento (guest/guest): todas as filas, com durabilidade, consumidores e taxas
+GET {{rabbit}}/api/queues
+Authorization: {{rabbitAuth}}
+
+### RabbitMQ-2. Fila consulta-profissionais: durable, consumers >= 1, message_stats.publish >= 1
+GET {{rabbit}}/api/queues/%2F/consulta-profissionais
+Authorization: {{rabbitAuth}}
+
+### RabbitMQ-3. Fila atualizacoes-projetos (api publica, projetos consome)
+GET {{rabbit}}/api/queues/%2F/atualizacoes-projetos
+Authorization: {{rabbitAuth}}
+
+### RabbitMQ-4. Fila eventos-projetos (projetos publica, notificações consome)
+GET {{rabbit}}/api/queues/%2F/eventos-projetos
+Authorization: {{rabbitAuth}}
+
+### RabbitMQ-5. Conexões abertas (os quatro serviços)
+GET {{rabbit}}/api/connections
+Authorization: {{rabbitAuth}}

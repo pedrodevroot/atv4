@@ -1,65 +1,225 @@
-name: cinebridge
-
 services:
-  postgres:
-    image: postgres:18-alpine
-    container_name: cinebridge-postgres
+  cinebridge-mq:
+    image: rabbitmq:3-management-alpine
+    container_name: cinebridge-mq
+    hostname: cinebridge-mq
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres}
-      RECOMENDACAO_DB_USER: ${DB_USER:-recomendacao}
-      RECOMENDACAO_DB_PASSWORD: ${DB_PASSWORD:-recomendacao}
-      RECOMENDACAO_DB_NAME: ${DB_NAME:-cinebridge_recomendacao}
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
     ports:
-      - '${POSTGRES_HOST_PORT:-5434}:5432'
+      - '${RABBITMQ_PORTA:-5672}:5672'
+      - '${RABBITMQ_UI_PORTA:-15672}:15672'
     volumes:
-      - cinebridge-pgdata:/var/lib/postgresql
+      - rabbitmq-dados:/var/lib/rabbitmq
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_port_connectivity']
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  profissionais-db:
+    image: postgres:15-alpine
+    container_name: profissionais-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      APP_DB_USER: profissionais
+      APP_DB_PASSWORD: profissionais
+      APP_DB_NAME: cinebridge_profissionais
+    ports:
+      - '127.0.0.1:${PROFISSIONAIS_DB_PORTA:-5432}:5432'
+    volumes:
+      - profissionais-dados:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     networks:
-      - cinebridge
+      - cinebridge-net
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d postgres']
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 5432 -U postgres -d $${APP_DB_NAME}']
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
 
-  recomendacao:
-    build: .
-    image: cinebridge/recomendacao:local
-    container_name: cinebridge-recomendacao
+  projetos-db:
+    image: postgres:15-alpine
+    container_name: projetos-db
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
-      NODE_ENV: production
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      PORT: 3000
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-recomendacao}
-      DB_PASSWORD: ${DB_PASSWORD:-recomendacao}
-      DB_NAME: ${DB_NAME:-cinebridge_recomendacao}
-      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
-      SEED_AO_INICIAR: ${SEED_AO_INICIAR:-true}
-      DB_POOL_MAX: ${DB_POOL_MAX:-40}
-      DB_TIMEOUT_MS: ${DB_TIMEOUT_MS:-5000}
-      ARMAZENAMENTO_PROVEDOR: ${ARMAZENAMENTO_PROVEDOR:-s3}
-      PAGAMENTO_PROVEDOR: ${PAGAMENTO_PROVEDOR:-stripe}
-      PROFISSIONAIS_PROVEDOR: ${PROFISSIONAIS_PROVEDOR:-interno}
-      DECORADORES: ${DECORADORES:-cache,auditoria,compressao}
-      CACHE_RECOMENDACOES_TTL_MS: ${CACHE_RECOMENDACOES_TTL_MS:-60000}
-      CACHE_RECOMENDACOES_MAXIMO: ${CACHE_RECOMENDACOES_MAXIMO:-500}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      APP_DB_USER: projetos
+      APP_DB_PASSWORD: projetos
+      APP_DB_NAME: cinebridge_projetos
     ports:
-      - '${RECOMENDACAO_HOST_PORT:-3000}:3000'
+      - '127.0.0.1:${PROJETOS_DB_PORTA:-5433}:5432'
+    volumes:
+      - projetos-dados:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     networks:
-      - cinebridge
+      - cinebridge-net
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 5432 -U postgres -d $${APP_DB_NAME}']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  recomendacoes-db:
+    image: postgres:15-alpine
+    container_name: recomendacoes-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      APP_DB_USER: recomendacao
+      APP_DB_PASSWORD: recomendacao
+      APP_DB_NAME: cinebridge_recomendacao
+    ports:
+      - '127.0.0.1:${RECOMENDACOES_DB_PORTA:-5434}:5432'
+    volumes:
+      - recomendacoes-dados:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 5432 -U postgres -d $${APP_DB_NAME}']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  notificacoes-db:
+    image: postgres:15-alpine
+    container_name: notificacoes-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      APP_DB_USER: notificacoes
+      APP_DB_PASSWORD: notificacoes
+      APP_DB_NAME: cinebridge_notificacoes
+    ports:
+      - '127.0.0.1:${NOTIFICACOES_DB_PORTA:-5435}:5432'
+    volumes:
+      - notificacoes-dados:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 5432 -U postgres -d $${APP_DB_NAME}']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  cinebridge-profissionais:
+    build: ./servicos/cinebridge-profissionais
+    image: cinebridge/profissionais:atv4
+    container_name: cinebridge-profissionais
+    restart: unless-stopped
+    env_file:
+      - ./servicos/cinebridge-profissionais/.env.docker
+    ports:
+      - '${PROFISSIONAIS_PORTA:-3001}:3001'
+    depends_on:
+      profissionais-db:
+        condition: service_healthy
+      cinebridge-mq:
+        condition: service_healthy
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3001/health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 180s
+
+  cinebridge-projetos:
+    build: ./servicos/cinebridge-projetos
+    image: cinebridge/projetos:atv4
+    container_name: cinebridge-projetos
+    restart: unless-stopped
+    env_file:
+      - ./servicos/cinebridge-projetos/.env.docker
+    ports:
+      - '${PROJETOS_PORTA:-3002}:3002'
+    depends_on:
+      projetos-db:
+        condition: service_healthy
+      cinebridge-mq:
+        condition: service_healthy
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3002/health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
+  cinebridge-notificacoes:
+    build: ./servicos/cinebridge-notificacoes
+    image: cinebridge/notificacoes:atv4
+    container_name: cinebridge-notificacoes
+    restart: unless-stopped
+    env_file:
+      - ./servicos/cinebridge-notificacoes/.env.docker
+    ports:
+      - '${NOTIFICACOES_PORTA:-3003}:3003'
+    depends_on:
+      notificacoes-db:
+        condition: service_healthy
+      cinebridge-mq:
+        condition: service_healthy
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3003/health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
+  cinebridge-api:
+    build: ./servicos/cinebridge-api
+    image: cinebridge/api:atv4
+    container_name: cinebridge-api
+    restart: unless-stopped
+    env_file:
+      - ./servicos/cinebridge-api/.env.docker
+    ports:
+      - '${API_PORTA:-3000}:3000'
+    depends_on:
+      recomendacoes-db:
+        condition: service_healthy
+      cinebridge-mq:
+        condition: service_healthy
+      cinebridge-profissionais:
+        condition: service_healthy
+    networks:
+      - cinebridge-net
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
 
 networks:
-  cinebridge:
-    name: cinebridge
+  cinebridge-net:
+    name: cinebridge-net
+    driver: bridge
 
 volumes:
-  cinebridge-pgdata:
-    name: cinebridge-pgdata
+  rabbitmq-dados:
+    name: cinebridge-rabbitmq-dados
+  profissionais-dados:
+    name: cinebridge-profissionais-dados
+  projetos-dados:
+    name: cinebridge-projetos-dados
+  recomendacoes-dados:
+    name: cinebridge-recomendacoes-dados
+  notificacoes-dados:
+    name: cinebridge-notificacoes-dados
