@@ -35,6 +35,7 @@ describe('Correções de robustez com PostgreSQL real', () => {
 
   beforeEach(async () => {
     agora = AGORA.getTime();
+    await container.barramento.aguardarEntregas();
     await limparTabelas(banco);
   });
 
